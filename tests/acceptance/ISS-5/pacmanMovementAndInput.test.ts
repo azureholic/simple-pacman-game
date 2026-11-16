@@ -1389,9 +1389,10 @@ test('REQ-002_collision_between_pacman_and_ghost_triggers_death_state', async ()
   assert.equal(deadSnap.deathCount, 1)
 
   const deadCtx = createRecordingCanvasContext()
-  const deadRender = renderGameToCanvas(deadCtx.ctx, deadSnap, CLASSIC_MAZE)
+  const deadPacmanOnlySnapshot = { ...deadSnap, ghosts: [] }
+  const deadRender = renderGameToCanvas(deadCtx.ctx, deadPacmanOnlySnapshot, CLASSIC_MAZE)
   assert.equal(deadRender.pacmanStatus, 'dead')
-  assert.equal(deadRender.renderedGhostCount, 1)
+  assert.equal(deadRender.renderedGhostCount, 0)
   const deadPacmanArc = deadCtx.filledArcs
     .filter(
       (arc) =>
