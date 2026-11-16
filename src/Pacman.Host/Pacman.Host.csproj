@@ -7,7 +7,7 @@
 
   <ItemGroup>
     <SpaInstallInputs Include="$(SpaRoot)\package.json;$(SpaRoot)\package-lock.json" />
-    <SpaInputs Include="$(SpaRoot)\package.json;$(SpaRoot)\package-lock.json;$(SpaRoot)\tsconfig.json;$(SpaRoot)\tsconfig.app.json;$(SpaRoot)\tsconfig.node.json;$(SpaRoot)\vite.config.ts;$(SpaRoot)\index.html;$(SpaRoot)\public\**\*;$(SpaRoot)\src\**\*" />
+    <SpaInputs Include="$(SpaRoot)\package.json;$(SpaRoot)\package-lock.json;$(SpaRoot)\tsconfig.json;$(SpaRoot)\tsconfig.app.json;$(SpaRoot)\tsconfig.node.json;$(SpaRoot)\vite.config.ts;$(SpaRoot)\index.html;$(SpaRoot)\public\**\*;$(SpaRoot)\src\**\*;$(SpaRoot)\tests\**\*" />
   </ItemGroup>
 
   <Target Name="EnsureSpaDepsStampValid" BeforeTargets="InstallWebFrontendDeps" Condition="'$(DesignTimeBuild)' != 'true' AND '$(SkipSpaBuild)' != 'true'">
@@ -23,7 +23,7 @@
     <Touch Files="$(SpaStampFile)" AlwaysCreate="true" />
   </Target>
 
-  <Target Name="BuildWebFrontend" DependsOnTargets="InstallWebFrontendDeps" BeforeTargets="ResolveProjectStaticWebAssets;AssignTargetPaths;Build" Inputs="@(SpaInputs)" Outputs="$(MSBuildProjectDirectory)\wwwroot\index.html" Condition="'$(DesignTimeBuild)' != 'true' AND '$(SkipSpaBuild)' != 'true'">
+  <Target Name="BuildWebFrontend" DependsOnTargets="InstallWebFrontendDeps" BeforeTargets="ResolveProjectStaticWebAssets;AssignTargetPaths;Build" Inputs="@(SpaInputs)" Outputs="$(MSBuildProjectDirectory)\wwwroot\index.html;$(SpaRoot)\dist\index.html" Condition="'$(DesignTimeBuild)' != 'true' AND '$(SkipSpaBuild)' != 'true'">
     <Exec WorkingDirectory="$(SpaRoot)" Command="npm run build" StandardErrorImportance="High" />
     <ItemGroup>
       <SpaDistFiles Include="$(SpaRoot)\dist\**\*" />
