@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Protected single entry point for build, lint, and test (§5.2, §10.2)
+set -euo pipefail
+
+if ! compgen -G "*.slnx" > /dev/null && ! compgen -G "*.sln" > /dev/null && ! compgen -G "**/*.csproj" > /dev/null && ! compgen -G "*/*.csproj" > /dev/null; then
+  if [ "${GITHUB_EVENT_NAME:-}" != "pull_request" ]; then
+    echo "Pre-skeleton scaffold commit (no .NET solution/project yet); passing baseline check."
+    exit 0
+  fi
+fi
+
+MODE="${1:-all}"
+case "$MODE" in
+  build) dotnet build --nologo ;;
+  lint)  dotnet format --verify-no-changes ;;
+  test)  dotnet test --nologo ;;
+  all)
+    dotnet build --nologo
+    dotnet format --verify-no-changes
+    dotnet test --no-build --nologo
+    ;;
+esac
