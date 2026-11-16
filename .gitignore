@@ -1,0 +1,14 @@
+[Bb]in/
+[Oo]bj/
+TestResults/
+src/Pacman.Host/wwwroot/
+node_modules/
+web/node_modules/
+web/dist/
+web/.vite/
+*.tsbuildinfo
+*.user
+.vs/
+.idea/
+.vscode/
+image.tar
