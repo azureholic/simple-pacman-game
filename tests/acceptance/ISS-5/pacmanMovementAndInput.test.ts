@@ -1441,7 +1441,15 @@ test('REQ-002_engine_instances_and_snapshots_are_isolated_between_runs', async (
   }
   try {
     snapRef.tick = 999
+  } catch {
+    // Frozen object rejection is expected and valid
+  }
+  try {
     snapRef.pacman.position.col = 999
+  } catch {
+    // Frozen object rejection is expected and valid
+  }
+  try {
     snapRef.pacman.status = 'dead'
   } catch {
     // Frozen object rejection is expected and valid
