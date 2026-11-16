@@ -1,0 +1,7 @@
+# Protected paths owned by human operators (§5.2, §10.2)
+/.github/ @azureholic
+/scripts/ @azureholic
+/tests/acceptance/_harness/ @azureholic
+/docs/spec.md @azureholic
+/docs/features/ @azureholic
+/CODEOWNERS @azureholic
