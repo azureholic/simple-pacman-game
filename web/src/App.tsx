@@ -1,5 +1,30 @@
 import { useEffect, useRef } from 'react'
+import {
+  CLASSIC_MAZE,
+  getPelletSpawnPositions,
+  isWallTile,
+  renderMazeToCanvas,
+} from './maze/classicMaze.ts'
 import { DEMO_SEED } from './seed/demoSeed.ts'
+
+const CANVAS_WIDTH = CLASSIC_MAZE.columns * CLASSIC_MAZE.tileSizePx
+const CANVAS_HEIGHT = CLASSIC_MAZE.rows * CLASSIC_MAZE.tileSizePx
+
+let wallTiles = 0
+let corridorTiles = 0
+for (let row = 0; row < CLASSIC_MAZE.rows; row += 1) {
+  for (let col = 0; col < CLASSIC_MAZE.columns; col += 1) {
+    if (isWallTile(CLASSIC_MAZE, row, col)) {
+      wallTiles += 1
+    } else {
+      corridorTiles += 1
+    }
+  }
+}
+
+const WALL_TILE_COUNT = wallTiles
+const CORRIDOR_TILE_COUNT = corridorTiles
+const PELLET_SPAWN_COUNT = getPelletSpawnPositions(CLASSIC_MAZE).length
 
 export function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -21,26 +46,7 @@ export function App() {
       return
     }
 
-    ctx.fillStyle = '#020617'
-    ctx.fillRect(0, 0, canvas.width, canvas.height)
-
-    ctx.strokeStyle = '#1d4ed8'
-    ctx.lineWidth = 4
-    ctx.strokeRect(8, 8, canvas.width - 16, canvas.height - 16)
-
-    ctx.fillStyle = '#fde047'
-    ctx.font = 'bold 24px system-ui, sans-serif'
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    ctx.fillText('READY!', canvas.width / 2, canvas.height / 2 - 12)
-
-    ctx.fillStyle = '#cbd5e1'
-    ctx.font = '14px system-ui, sans-serif'
-    ctx.fillText(
-      `${DEMO_SEED.levelName} (${DEMO_SEED.columns}x${DEMO_SEED.rows})`,
-      canvas.width / 2,
-      canvas.height / 2 + 20,
-    )
+    renderMazeToCanvas(ctx, CLASSIC_MAZE)
   }, [])
 
   return (
@@ -60,14 +66,20 @@ export function App() {
           ref={canvasRef}
           className="game-canvas"
           data-testid="game-canvas"
-          width={DEMO_SEED.canvasWidth}
-          height={DEMO_SEED.canvasHeight}
+          data-level-id={CLASSIC_MAZE.levelId}
+          data-maze-cols={CLASSIC_MAZE.columns}
+          data-maze-rows={CLASSIC_MAZE.rows}
+          data-wall-tiles={WALL_TILE_COUNT}
+          data-corridor-tiles={CORRIDOR_TILE_COUNT}
+          data-pellet-spawns={PELLET_SPAWN_COUNT}
+          width={CANVAS_WIDTH}
+          height={CANVAS_HEIGHT}
           role="img"
-          aria-label={`Simple Pacman placeholder game canvas, ${DEMO_SEED.canvasWidth} by ${DEMO_SEED.canvasHeight} pixels, ${DEMO_SEED.levelName} ready`}
+          aria-label={`Simple Pacman placeholder game canvas, ${CANVAS_WIDTH} by ${CANVAS_HEIGHT} pixels, ${DEMO_SEED.levelName} ready`}
         />
         <p className="stage-caption" role="status" data-testid="placeholder-status">
-          Desktop viewport ready ({DEMO_SEED.columns} × {DEMO_SEED.rows} tiles · {DEMO_SEED.canvasWidth} ×{' '}
-          {DEMO_SEED.canvasHeight} px · client-side only)
+          Desktop viewport ready ({CLASSIC_MAZE.columns} × {CLASSIC_MAZE.rows} tiles · {CANVAS_WIDTH} ×{' '}
+          {CANVAS_HEIGHT} px · client-side only)
         </p>
       </section>
     </main>
