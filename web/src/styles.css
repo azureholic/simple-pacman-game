@@ -1,0 +1,97 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+  background-color: #070b14;
+  color: #f8fafc;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+#root {
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 24px;
+}
+
+.app-shell {
+  width: 100%;
+  max-width: 720px;
+  min-width: 608px;
+  background-color: #0f172a;
+  border: 2px solid #38bdf8;
+  border-radius: 12px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.app-header {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  border-bottom: 1px solid #334155;
+  padding-bottom: 12px;
+  gap: 16px;
+}
+
+.app-title {
+  margin: 0;
+  font-size: 1.75rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #fde047;
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background-color: #1e293b;
+  border: 1px solid #38bdf8;
+  color: #e0f2fe;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.stage-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.stage-heading {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #f8fafc;
+}
+
+.game-canvas {
+  display: block;
+  width: 560px;
+  height: 620px;
+  background-color: #020617;
+  border: 2px solid #1d4ed8;
+  border-radius: 4px;
+}
+
+.stage-caption {
+  margin: 0;
+  font-size: 0.9rem;
+  color: #cbd5e1;
+  text-align: center;
+}
