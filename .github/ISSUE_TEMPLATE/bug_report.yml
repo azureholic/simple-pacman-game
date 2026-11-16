@@ -1,0 +1,11 @@
+name: Bug Report
+description: Report a bug in this demo application
+labels: ["bug", "inbox"]
+# Never apply the 'factory' work label on public issue forms (§5.6)
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+    validations:
+      required: true
