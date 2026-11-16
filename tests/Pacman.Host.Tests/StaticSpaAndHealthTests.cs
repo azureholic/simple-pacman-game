@@ -70,14 +70,15 @@ public sealed partial class StaticSpaAndHealthTests(WebApplicationFactory<Progra
     {
         var repoRoot = FindRepoRoot();
         var webDir = Path.Combine(repoRoot, "web");
-        var npmCmd = OperatingSystem.IsWindows() ? "npm.cmd" : "npm";
+        var npmCmd = OperatingSystem.IsWindows() ? "cmd.exe" : "npm";
+        var npmArguments = OperatingSystem.IsWindows() ? "/d /c npm.cmd test" : "test";
 
         using var process = new Process
         {
             StartInfo = new ProcessStartInfo
             {
                 FileName = npmCmd,
-                Arguments = "test",
+                Arguments = npmArguments,
                 WorkingDirectory = webDir,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
