@@ -9,17 +9,22 @@ import { createServer } from 'vite'
 import {
   CLASSIC_MAZE,
   isTileTraversable,
+  isWallTile,
   type MazeCanvasContext,
   type MazeDefinition,
 } from '../src/maze/classicMaze.ts'
 import {
   DEFAULT_GHOST_SPAWNS,
+  GHOST_DIRECTION_PRIORITY,
   PACMAN_SPAWN_POSITION,
   attachKeyboardControls,
   checkGhostCollision,
+  chooseGhostDirection,
   createPacmanGame,
   mapKeyToDirection,
   renderGameToCanvas,
+  stepGhostState,
+  type GhostState,
   type KeyboardEventLike,
   type KeyboardEventTargetLike,
   type PacmanGameOptions,
@@ -362,10 +367,14 @@ test('renderGameToCanvas and App render Pacman, ghosts, and data-pacman attribut
 
   try {
     const mod = await vite.ssrLoadModule('/src/App.tsx')
+    const defaultHtml = renderToStaticMarkup(createElement(mod.App))
+    assert.match(defaultHtml, /data-ghost-count="4"/)
+
     const aliveHtml = renderToStaticMarkup(createElement(mod.App, { game: aliveGame }))
     assert.match(aliveHtml, /data-pacman-row="23"/)
     assert.match(aliveHtml, /data-pacman-col="13"/)
     assert.match(aliveHtml, /data-pacman-status="alive"/)
+    assert.match(aliveHtml, /data-ghost-count="1"/)
 
     const deadHtml = renderToStaticMarkup(createElement(mod.App, { game: deadGame }))
     assert.match(deadHtml, /data-pacman-status="dead"/)
@@ -379,4 +388,158 @@ test('renderGameToCanvas and App render Pacman, ghosts, and data-pacman attribut
   assert.doesNotMatch(engineSource, /\blocalStorage\b/)
   assert.doesNotMatch(engineSource, /\bsessionStorage\b/)
   assert.doesNotMatch(engineSource, /\bAudioContext\b/)
+})
+
+test('Ghost AI helpers respect walls, classic non-reverse rule, BFS routing, and priority tie-breakers', () => {
+  assert.deepEqual(GHOST_DIRECTION_PRIORITY, ['up', 'left', 'down', 'right'])
+  assert.equal(Object.isFrozen(GHOST_DIRECTION_PRIORITY), true)
+
+  // Wall, out-of-bounds, and enclosed pocket ghosts return null and remain stationary without mutating input
+  const wallGhost: GhostState = { id: 'wall-probe', position: { row: 0, col: 0 }, direction: 'right' }
+  assert.equal(chooseGhostDirection(CLASSIC_MAZE, wallGhost, PACMAN_SPAWN_POSITION), null)
+  const wallStep = stepGhostState(CLASSIC_MAZE, wallGhost, PACMAN_SPAWN_POSITION)
+  assert.deepEqual(wallGhost, { id: 'wall-probe', position: { row: 0, col: 0 }, direction: 'right' })
+  assert.deepEqual(wallStep, { id: 'wall-probe', position: { row: 0, col: 0 }, direction: null })
+  assert.equal(Object.isFrozen(wallStep), true)
+  assert.equal(Object.isFrozen(wallStep.position), true)
+
+  const pocketMaze: MazeDefinition = {
+    levelId: 'pocket-test',
+    columns: 3,
+    rows: 3,
+    tileSizePx: 20,
+    grid: [
+      ['wall', 'wall', 'wall'],
+      ['wall', 'corridor', 'wall'],
+      ['wall', 'wall', 'wall'],
+    ],
+  }
+  assert.equal(
+    chooseGhostDirection(pocketMaze, { id: 'trapped', position: { row: 1, col: 1 }, direction: 'up' }, { row: 1, col: 1 }),
+    null,
+  )
+
+  // Non-reverse mid-corridor and reversal at dead end
+  const deadEndMaze: MazeDefinition = {
+    levelId: 'dead-end-test',
+    columns: 5,
+    rows: 3,
+    tileSizePx: 20,
+    grid: [
+      ['wall', 'wall', 'wall', 'wall', 'wall'],
+      ['wall', 'corridor', 'corridor', 'corridor', 'wall'],
+      ['wall', 'wall', 'wall', 'wall', 'wall'],
+    ],
+  }
+  const forwardStep = stepGhostState(
+    deadEndMaze,
+    { id: 'runner', position: { row: 1, col: 2 }, direction: 'right' },
+    { row: 1, col: 1 },
+  )
+  assert.deepEqual(forwardStep, { id: 'runner', position: { row: 1, col: 3 }, direction: 'right' })
+  const reverseStep = stepGhostState(deadEndMaze, forwardStep, { row: 1, col: 1 })
+  assert.deepEqual(reverseStep, { id: 'runner', position: { row: 1, col: 2 }, direction: 'left' })
+
+  // BFS shortest-path routes around Ghost House wall instead of entering dead-end doorway
+  const blinkyAtDoor: GhostState = { id: 'blinky', position: { row: 11, col: 13 }, direction: null }
+  assert.equal(chooseGhostDirection(CLASSIC_MAZE, blinkyAtDoor, PACMAN_SPAWN_POSITION), 'left')
+
+  // Unreachable target across solid wall falls back to Manhattan distance then GHOST_DIRECTION_PRIORITY
+  const splitMaze: MazeDefinition = {
+    levelId: 'split-test',
+    columns: 5,
+    rows: 5,
+    tileSizePx: 20,
+    grid: [
+      ['wall', 'wall', 'wall', 'wall', 'wall'],
+      ['wall', 'corridor', 'corridor', 'corridor', 'wall'],
+      ['wall', 'wall', 'wall', 'wall', 'wall'],
+      ['wall', 'corridor', 'corridor', 'corridor', 'wall'],
+      ['wall', 'wall', 'wall', 'wall', 'wall'],
+    ],
+  }
+  assert.equal(
+    chooseGhostDirection(splitMaze, { id: 'caged', position: { row: 1, col: 2 }, direction: null }, { row: 3, col: 3 }),
+    'right',
+  )
+  assert.equal(
+    chooseGhostDirection(splitMaze, { id: 'caged', position: { row: 1, col: 2 }, direction: null }, { row: 3, col: 2 }),
+    'left',
+  )
+})
+
+test('Default AI ghostMovement navigates CLASSIC_MAZE deterministically and resolves all collision encounters', () => {
+  // Invalid ghostMovement throws on createPacmanGame and reset without corrupting existing state
+  assert.throws(
+    () => createPacmanGame({ maze: CLASSIC_MAZE, ghostMovement: 'invalid' as never }),
+    Error,
+  )
+
+  const game = createPacmanGame()
+  assert.throws(() => game.reset({ maze: CLASSIC_MAZE, ghostMovement: 'invalid' as never }), Error)
+  assert.equal(game.getSnapshot().tick, 0)
+
+  for (let step = 0; step < 20; step += 1) {
+    const snap = game.tick()
+    for (const ghost of snap.ghosts) {
+      assert.equal(isWallTile(CLASSIC_MAZE, ghost.position.row, ghost.position.col), false)
+      assert.equal(isTileTraversable(CLASSIC_MAZE, ghost.position.row, ghost.position.col), true)
+    }
+    if (snap.isPacmanDead) {
+      break
+    }
+  }
+  const caughtSnap = game.getSnapshot()
+  assert.equal(caughtSnap.isPacmanDead, true)
+  assert.equal(caughtSnap.pacman.status, 'dead')
+  assert.equal(caughtSnap.deathCount, 1)
+
+  // Ghosts halt once Pacman is dead, and reset replays identical deterministic trajectory
+  const postDeathGhosts = caughtSnap.ghosts.map((g) => g.position)
+  const afterDeadTick = game.tick()
+  assert.deepEqual(
+    afterDeadTick.ghosts.map((g) => g.position),
+    postDeathGhosts,
+  )
+  assert.equal(afterDeadTick.deathCount, 1)
+
+  const replayGame = createPacmanGame()
+  for (let step = 0; step < caughtSnap.tick; step += 1) {
+    replayGame.tick()
+  }
+  assert.deepEqual(replayGame.getSnapshot(), caughtSnap)
+
+  // Converging, head-on swap, and retreating corridor encounters under AI movement
+  const convergeGame = createPacmanGame({
+    maze: CLASSIC_MAZE,
+    pacmanSpawn: { row: 5, col: 5 },
+    ghosts: [{ id: 'blinky', position: { row: 5, col: 7 } }],
+  })
+  convergeGame.handleKeyInput('ArrowRight')
+  const convergeSnap = convergeGame.tick()
+  assert.deepEqual(convergeSnap.pacman.position, { row: 5, col: 6 })
+  assert.deepEqual(convergeSnap.ghosts[0].position, { row: 5, col: 6 })
+  assert.equal(convergeSnap.isPacmanDead, true)
+
+  const swapGame = createPacmanGame({
+    maze: CLASSIC_MAZE,
+    pacmanSpawn: { row: 5, col: 6 },
+    ghosts: [{ id: 'blinky', position: { row: 5, col: 7 } }],
+  })
+  swapGame.handleKeyInput('ArrowRight')
+  const swapSnap = swapGame.tick()
+  assert.deepEqual(swapSnap.pacman.position, { row: 5, col: 7 })
+  assert.deepEqual(swapSnap.ghosts[0].position, { row: 5, col: 6 })
+  assert.equal(swapSnap.isPacmanDead, true)
+
+  const retreatGame = createPacmanGame({
+    maze: CLASSIC_MAZE,
+    pacmanSpawn: { row: 5, col: 6 },
+    ghosts: [{ id: 'blinky', position: { row: 5, col: 7 } }],
+  })
+  retreatGame.handleKeyInput('ArrowLeft')
+  const retreatSnap = retreatGame.tick()
+  assert.deepEqual(retreatSnap.pacman.position, { row: 5, col: 5 })
+  assert.deepEqual(retreatSnap.ghosts[0].position, { row: 5, col: 6 })
+  assert.equal(retreatSnap.isPacmanDead, false)
 })
