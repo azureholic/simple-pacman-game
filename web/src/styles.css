@@ -80,6 +80,83 @@ body {
   color: #f8fafc;
 }
 
+.hud-bar {
+  width: 560px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 14px;
+  background-color: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 8px;
+}
+
+.hud-stats {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.hud-stat {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #f8fafc;
+  font-variant-numeric: tabular-nums;
+}
+
+.hud-status-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.hud-status {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+.hud-status-won {
+  color: #4ade80;
+}
+
+.hud-status-game-over {
+  color: #f87171;
+}
+
+.hud-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hud-button {
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 1px solid #475569;
+  background-color: #0f172a;
+  color: #f8fafc;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.hud-button:hover {
+  background-color: #334155;
+}
+
+.hud-button-primary {
+  border-color: #fde047;
+  background-color: #ca8a04;
+  color: #020617;
+}
+
+.hud-button-primary:hover {
+  background-color: #eab308;
+}
+
 .game-canvas {
   display: block;
   width: 560px;

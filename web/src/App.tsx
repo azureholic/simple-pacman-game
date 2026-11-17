@@ -62,6 +62,22 @@ function getCanvas2dContext(canvas: HTMLCanvasElement | null): MazeCanvasContext
   }
 }
 
+function formatGameStatusLabel(snapshot: PacmanGameSnapshot): string {
+  if (snapshot.gameStatus === 'won') {
+    return 'You Win! All pellets collected.'
+  }
+
+  if (snapshot.gameStatus === 'game-over') {
+    return 'Game Over'
+  }
+
+  if (snapshot.pacman.status === 'dead' && snapshot.lives > 0) {
+    return 'Life lost — click Continue Life to respawn'
+  }
+
+  return 'Active — use Arrow keys to move'
+}
+
 export interface AppProps {
   readonly game?: PacmanGameEngine
   readonly tickIntervalMs?: number
@@ -97,7 +113,13 @@ export function App({ game, tickIntervalMs = DEFAULT_TICK_INTERVAL_MS }: AppProp
   useEffect(() => {
     const initialSnapshot = activeGame.getSnapshot()
     setTrackedState((prev) =>
-      prev.engine === activeGame && prev.snapshot.tick === initialSnapshot.tick
+      prev.engine === activeGame &&
+      prev.snapshot.tick === initialSnapshot.tick &&
+      prev.snapshot.score === initialSnapshot.score &&
+      prev.snapshot.lives === initialSnapshot.lives &&
+      prev.snapshot.remainingPelletCount === initialSnapshot.remainingPelletCount &&
+      prev.snapshot.gameStatus === initialSnapshot.gameStatus &&
+      prev.snapshot.pacman.status === initialSnapshot.pacman.status
         ? prev
         : { engine: activeGame, snapshot: initialSnapshot },
     )
@@ -124,6 +146,29 @@ export function App({ game, tickIntervalMs = DEFAULT_TICK_INTERVAL_MS }: AppProp
     }
   }, [activeGame, effectiveTickIntervalMs])
 
+  const handleRespawn = (): void => {
+    const nextSnapshot = activeGame.respawn()
+    setTrackedState({ engine: activeGame, snapshot: nextSnapshot })
+
+    const ctx = getCanvas2dContext(canvasRef.current)
+    if (ctx) {
+      renderGameToCanvas(ctx, nextSnapshot, activeGame.getMaze())
+    }
+  }
+
+  const handleRestart = (): void => {
+    const nextSnapshot = activeGame.reset()
+    setTrackedState({ engine: activeGame, snapshot: nextSnapshot })
+
+    const ctx = getCanvas2dContext(canvasRef.current)
+    if (ctx) {
+      renderGameToCanvas(ctx, nextSnapshot, activeGame.getMaze())
+    }
+  }
+
+  const canRespawn =
+    snapshot.gameStatus === 'playing' && snapshot.pacman.status === 'dead' && snapshot.lives > 0
+
   return (
     <main className="app-shell" data-testid="pacman-app">
       <header className="app-header">
@@ -137,6 +182,57 @@ export function App({ game, tickIntervalMs = DEFAULT_TICK_INTERVAL_MS }: AppProp
         <h2 id="stage-heading" className="stage-heading">
           {DEMO_SEED.levelName} Stage
         </h2>
+
+        <div className="hud-bar" aria-label="Game scoreboard and controls">
+          <div className="hud-stats">
+            <span className="hud-stat" data-testid="score-display" data-score={snapshot.score}>
+              Score: {snapshot.score}
+            </span>
+            <span className="hud-stat" data-testid="lives-display" data-lives={snapshot.lives}>
+              Lives: {snapshot.lives}
+            </span>
+            <span
+              className="hud-stat"
+              data-testid="pellets-display"
+              data-remaining-pellets={snapshot.remainingPelletCount}
+            >
+              Pellets: {snapshot.remainingPelletCount}
+            </span>
+          </div>
+
+          <div className="hud-status-row">
+            <span
+              className={`hud-status hud-status-${snapshot.gameStatus}`}
+              role="status"
+              data-testid="game-status"
+              data-game-status={snapshot.gameStatus}
+            >
+              {formatGameStatusLabel(snapshot)}
+            </span>
+
+            <div className="hud-actions">
+              {canRespawn && (
+                <button
+                  type="button"
+                  className="hud-button hud-button-primary"
+                  data-testid="respawn-button"
+                  onClick={handleRespawn}
+                >
+                  Continue Life
+                </button>
+              )}
+              <button
+                type="button"
+                className="hud-button"
+                data-testid="restart-button"
+                onClick={handleRestart}
+              >
+                Restart Game
+              </button>
+            </div>
+          </div>
+        </div>
+
         <canvas
           ref={canvasRef}
           className="game-canvas"
@@ -151,6 +247,10 @@ export function App({ game, tickIntervalMs = DEFAULT_TICK_INTERVAL_MS }: AppProp
           data-pacman-col={snapshot.pacman.position.col}
           data-pacman-status={snapshot.pacman.status}
           data-ghost-count={snapshot.ghosts.length}
+          data-score={snapshot.score}
+          data-lives={snapshot.lives}
+          data-remaining-pellets={snapshot.remainingPelletCount}
+          data-game-status={snapshot.gameStatus}
           width={mazeMetrics.width}
           height={mazeMetrics.height}
           role="img"

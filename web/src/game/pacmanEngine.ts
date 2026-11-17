@@ -1,6 +1,7 @@
 import {
   CLASSIC_MAZE,
   canMoveFromTile,
+  getPelletSpawnPositions,
   isTileTraversable,
   renderMazeToCanvas,
   resolveTileMovement,
@@ -8,12 +9,60 @@ import {
   type MazeCanvasContext,
   type MazeDefinition,
   type MazeRenderSummary,
+  type PelletSpawn,
   type TilePosition,
 } from '../maze/classicMaze.ts'
 
 export type PacmanStatus = 'alive' | 'dead'
 
 export type GhostMovementMode = 'stationary' | 'ai'
+
+export type GameStatus = 'playing' | 'won' | 'game-over'
+
+export const PELLET_SCORE = 10
+export const POWER_PELLET_SCORE = 50
+export const INITIAL_LIVES = 3
+
+export function getPelletScore(kind: PelletSpawn['kind']): number {
+  return kind === 'power-pellet' ? POWER_PELLET_SCORE : PELLET_SCORE
+}
+
+/**
+ * Gameplay events emitted synchronously by `PacmanGameEngine`:
+ * - `'pelletCollected'`: emitted when Pacman consumes an active `'pellet'` or `'power-pellet'`.
+ * - `'playerDied'`: emitted when Pacman collides with a ghost and loses a life.
+ * - `'gameWon'`: emitted at most once per game session when all pellets are collected.
+ * - `'gameLost'`: emitted at most once per game session when remaining lives reach `0`.
+ */
+export type PacmanGameEventType = 'pelletCollected' | 'playerDied' | 'gameWon' | 'gameLost'
+
+export type PacmanGameEvent =
+  | {
+      readonly type: 'pelletCollected'
+      readonly pellet: PelletSpawn
+      readonly pointsAwarded: number
+      readonly score: number
+      readonly remainingPelletCount: number
+    }
+  | {
+      readonly type: 'playerDied'
+      readonly position: TilePosition
+      readonly lives: number
+      readonly deathCount: number
+    }
+  | {
+      readonly type: 'gameWon'
+      readonly score: number
+      readonly tick: number
+    }
+  | {
+      readonly type: 'gameLost'
+      readonly score: number
+      readonly deathCount: number
+      readonly tick: number
+    }
+
+export type PacmanGameEventListener = (event: PacmanGameEvent) => void
 
 export interface PacmanState {
   readonly position: TilePosition
@@ -40,6 +89,15 @@ export interface PacmanGameSnapshot {
   readonly ghosts: readonly GhostState[]
   readonly isPacmanDead: boolean
   readonly deathCount: number
+  readonly score: number
+  readonly lives: number
+  readonly initialLives: number
+  readonly pellets: readonly PelletSpawn[]
+  readonly totalPelletCount: number
+  readonly remainingPelletCount: number
+  readonly gameStatus: GameStatus
+  readonly isGameOver: boolean
+  readonly isWin: boolean
 }
 
 export interface PacmanGameOptions {
@@ -47,6 +105,8 @@ export interface PacmanGameOptions {
   readonly pacmanSpawn?: TilePosition
   readonly ghosts?: readonly GhostInit[]
   readonly ghostMovement?: GhostMovementMode
+  readonly initialLives?: number
+  readonly onEvent?: PacmanGameEventListener
 }
 
 export interface KeyboardEventLike {
@@ -74,7 +134,9 @@ export interface PacmanGameEngine {
   getPacmanPosition(): TilePosition
   handleKeyInput(input: unknown): boolean
   tick(): PacmanGameSnapshot
+  respawn(): PacmanGameSnapshot
   reset(options?: PacmanGameOptions): PacmanGameSnapshot
+  subscribe?(listener: PacmanGameEventListener): () => void
 }
 
 export const PACMAN_SPAWN_POSITION: TilePosition = Object.freeze({ row: 23, col: 13 })
@@ -395,16 +457,37 @@ export function checkGhostCollision(
 interface InternalEngineState {
   maze: MazeDefinition
   tick: number
+  pacmanSpawn: TilePosition
   pacmanPosition: TilePosition
   pacmanDirection: Direction | null
   pacmanStatus: PacmanStatus
+  initialGhosts: GhostState[]
   ghosts: GhostState[]
   ghostMovement: GhostMovementMode
   deathCount: number
+  score: number
+  lives: number
+  initialLives: number
+  pellets: PelletSpawn[]
+  totalPelletCount: number
+  gameStatus: GameStatus
+  optionListener: PacmanGameEventListener | undefined
 }
 
 function clonePosition(pos: TilePosition): TilePosition {
   return Object.freeze({ row: pos.row, col: pos.col })
+}
+
+function clonePellet(pellet: PelletSpawn): PelletSpawn {
+  return Object.freeze({ row: pellet.row, col: pellet.col, kind: pellet.kind })
+}
+
+function cloneGhostStates(ghosts: readonly GhostState[]): GhostState[] {
+  return ghosts.map((ghost) => ({
+    id: ghost.id,
+    position: { row: ghost.position.row, col: ghost.position.col },
+    direction: ghost.direction,
+  }))
 }
 
 function cloneGameOptions(options?: PacmanGameOptions): PacmanGameOptions | undefined {
@@ -427,6 +510,8 @@ function cloneGameOptions(options?: PacmanGameOptions): PacmanGameOptions | unde
           }))
         : undefined,
     ghostMovement: options.ghostMovement,
+    initialLives: options.initialLives,
+    onEvent: options.onEvent,
   }
 }
 
@@ -444,6 +529,16 @@ function buildInitialState(options?: PacmanGameOptions): InternalEngineState {
     throw new Error(`Invalid ghostMovement mode "${String(options.ghostMovement)}"`)
   }
   const ghostMovement: GhostMovementMode = options?.ghostMovement ?? 'ai'
+
+  if (
+    options?.initialLives !== undefined &&
+    (!Number.isInteger(options.initialLives) || options.initialLives < 1)
+  ) {
+    throw new Error(
+      `Invalid initialLives "${String(options.initialLives)}": expected a positive integer >= 1`,
+    )
+  }
+  const initialLives = options?.initialLives ?? INITIAL_LIVES
 
   const rawGhosts =
     options?.ghosts !== undefined ? options.ghosts : maze === CLASSIC_MAZE ? DEFAULT_GHOST_SPAWNS : []
@@ -469,21 +564,40 @@ function buildInitialState(options?: PacmanGameOptions): InternalEngineState {
     })
   }
 
-  const pacmanPosition: TilePosition = { row: rawPacmanSpawn.row, col: rawPacmanSpawn.col }
+  const pacmanSpawn: TilePosition = { row: rawPacmanSpawn.row, col: rawPacmanSpawn.col }
+  const pacmanPosition: TilePosition = { row: pacmanSpawn.row, col: pacmanSpawn.col }
+  const initialPellets = getPelletSpawnPositions(maze).map((pellet) => ({
+    row: pellet.row,
+    col: pellet.col,
+    kind: pellet.kind,
+  }))
+  const totalPelletCount = initialPellets.length
+
   const initialOverlap = checkGhostCollision(
     pacmanPosition,
     normalizedGhosts.map((ghost) => ghost.position),
   )
+  const lives = initialOverlap ? Math.max(0, initialLives - 1) : initialLives
+  const gameStatus: GameStatus = initialOverlap && lives === 0 ? 'game-over' : 'playing'
 
   return {
     maze,
     tick: 0,
+    pacmanSpawn,
     pacmanPosition,
     pacmanDirection: null,
     pacmanStatus: initialOverlap ? 'dead' : 'alive',
+    initialGhosts: cloneGhostStates(normalizedGhosts),
     ghosts: normalizedGhosts,
     ghostMovement,
     deathCount: initialOverlap ? 1 : 0,
+    score: 0,
+    lives,
+    initialLives,
+    pellets: initialPellets,
+    totalPelletCount,
+    gameStatus,
+    optionListener: options?.onEvent,
   }
 }
 
@@ -504,6 +618,10 @@ function createFrozenSnapshot(state: InternalEngineState): PacmanGameSnapshot {
     ),
   )
 
+  const pelletStates: readonly PelletSpawn[] = Object.freeze(
+    state.pellets.map((pellet) => clonePellet(pellet)),
+  )
+
   return Object.freeze({
     levelId: state.maze.levelId,
     tick: state.tick,
@@ -511,12 +629,51 @@ function createFrozenSnapshot(state: InternalEngineState): PacmanGameSnapshot {
     ghosts: ghostStates,
     isPacmanDead: state.pacmanStatus === 'dead',
     deathCount: state.deathCount,
+    score: state.score,
+    lives: state.lives,
+    initialLives: state.initialLives,
+    pellets: pelletStates,
+    totalPelletCount: state.totalPelletCount,
+    remainingPelletCount: pelletStates.length,
+    gameStatus: state.gameStatus,
+    isGameOver: state.gameStatus === 'game-over',
+    isWin: state.gameStatus === 'won',
   })
 }
 
 export function createPacmanGame(options?: PacmanGameOptions): PacmanGameEngine {
   const savedCreationOptions = cloneGameOptions(options)
+  const subscribers = new Set<PacmanGameEventListener>()
   let state = buildInitialState(savedCreationOptions)
+
+  function emitEvent(event: PacmanGameEvent): void {
+    const frozenEvent = Object.freeze(event)
+    state.optionListener?.(frozenEvent)
+    for (const listener of [...subscribers]) {
+      listener(frozenEvent)
+    }
+  }
+
+  function emitInitialOverlapEventsIfNeeded(currentState: InternalEngineState): void {
+    if (currentState.pacmanStatus === 'dead') {
+      emitEvent({
+        type: 'playerDied',
+        position: clonePosition(currentState.pacmanPosition),
+        lives: currentState.lives,
+        deathCount: currentState.deathCount,
+      })
+      if (currentState.gameStatus === 'game-over') {
+        emitEvent({
+          type: 'gameLost',
+          score: currentState.score,
+          deathCount: currentState.deathCount,
+          tick: currentState.tick,
+        })
+      }
+    }
+  }
+
+  emitInitialOverlapEventsIfNeeded(state)
 
   return {
     getMaze(): MazeDefinition {
@@ -533,7 +690,11 @@ export function createPacmanGame(options?: PacmanGameOptions): PacmanGameEngine 
 
     handleKeyInput(input: unknown): boolean {
       const mappedDirection = mapKeyToDirection(input)
-      if (mappedDirection === null || state.pacmanStatus === 'dead') {
+      if (
+        mappedDirection === null ||
+        state.pacmanStatus === 'dead' ||
+        state.gameStatus !== 'playing'
+      ) {
         return false
       }
 
@@ -544,7 +705,7 @@ export function createPacmanGame(options?: PacmanGameOptions): PacmanGameEngine 
     tick(): PacmanGameSnapshot {
       state.tick += 1
 
-      if (state.pacmanStatus === 'dead') {
+      if (state.pacmanStatus === 'dead' || state.gameStatus !== 'playing') {
         return createFrozenSnapshot(state)
       }
 
@@ -583,6 +744,94 @@ export function createPacmanGame(options?: PacmanGameOptions): PacmanGameEngine 
         state.pacmanStatus = 'dead'
         state.pacmanDirection = null
         state.deathCount += 1
+        state.lives = Math.max(0, state.lives - 1)
+        emitEvent({
+          type: 'playerDied',
+          position: clonePosition(state.pacmanPosition),
+          lives: state.lives,
+          deathCount: state.deathCount,
+        })
+        if (state.lives === 0) {
+          state.gameStatus = 'game-over'
+          emitEvent({
+            type: 'gameLost',
+            score: state.score,
+            deathCount: state.deathCount,
+            tick: state.tick,
+          })
+        }
+        return createFrozenSnapshot(state)
+      }
+
+      const pelletIndex = state.pellets.findIndex(
+        (pellet) =>
+          pellet.row === state.pacmanPosition.row && pellet.col === state.pacmanPosition.col,
+      )
+      if (pelletIndex >= 0) {
+        const [collectedPellet] = state.pellets.splice(pelletIndex, 1)
+        const pointsAwarded = getPelletScore(collectedPellet.kind)
+        state.score += pointsAwarded
+        emitEvent({
+          type: 'pelletCollected',
+          pellet: clonePellet(collectedPellet),
+          pointsAwarded,
+          score: state.score,
+          remainingPelletCount: state.pellets.length,
+        })
+
+        if (state.totalPelletCount > 0 && state.pellets.length === 0) {
+          state.gameStatus = 'won'
+          state.pacmanDirection = null
+          emitEvent({
+            type: 'gameWon',
+            score: state.score,
+            tick: state.tick,
+          })
+        }
+      }
+
+      return createFrozenSnapshot(state)
+    },
+
+    respawn(): PacmanGameSnapshot {
+      if (
+        state.pacmanStatus !== 'dead' ||
+        state.lives <= 0 ||
+        state.gameStatus !== 'playing'
+      ) {
+        return createFrozenSnapshot(state)
+      }
+
+      state.pacmanPosition = { row: state.pacmanSpawn.row, col: state.pacmanSpawn.col }
+      state.pacmanDirection = null
+      state.ghosts = cloneGhostStates(state.initialGhosts)
+
+      const respawnOverlap = checkGhostCollision(
+        state.pacmanPosition,
+        state.ghosts.map((ghost) => ghost.position),
+      )
+      if (respawnOverlap) {
+        state.pacmanStatus = 'dead'
+        state.deathCount += 1
+        state.lives = Math.max(0, state.lives - 1)
+        emitEvent({
+          type: 'playerDied',
+          position: clonePosition(state.pacmanPosition),
+          lives: state.lives,
+          deathCount: state.deathCount,
+        })
+        if (state.lives === 0) {
+          state.gameStatus = 'game-over'
+          emitEvent({
+            type: 'gameLost',
+            score: state.score,
+            deathCount: state.deathCount,
+            tick: state.tick,
+          })
+        }
+      } else {
+        state.pacmanStatus = 'alive'
+        state.gameStatus = 'playing'
       }
 
       return createFrozenSnapshot(state)
@@ -591,7 +840,20 @@ export function createPacmanGame(options?: PacmanGameOptions): PacmanGameEngine 
     reset(nextOptions?: PacmanGameOptions): PacmanGameSnapshot {
       const effectiveOptions = nextOptions !== undefined ? nextOptions : savedCreationOptions
       state = buildInitialState(effectiveOptions)
+      emitInitialOverlapEventsIfNeeded(state)
       return createFrozenSnapshot(state)
+    },
+
+    subscribe(listener: PacmanGameEventListener): () => void {
+      subscribers.add(listener)
+      let unsubscribed = false
+      return () => {
+        if (unsubscribed) {
+          return
+        }
+        unsubscribed = true
+        subscribers.delete(listener)
+      }
     },
   }
 }
@@ -601,7 +863,10 @@ export function renderGameToCanvas(
   snapshot: PacmanGameSnapshot,
   maze: MazeDefinition = CLASSIC_MAZE,
 ): GameRenderSummary {
-  const mazeSummary = renderMazeToCanvas(ctx, maze)
+  const activePellets = Array.isArray((snapshot as Partial<PacmanGameSnapshot>).pellets)
+    ? snapshot.pellets
+    : undefined
+  const mazeSummary = renderMazeToCanvas(ctx, maze, activePellets)
   const tileSize = maze.tileSizePx
   const ghostRadius = tileSize * 0.38
   const pacmanRadius = tileSize * 0.42
