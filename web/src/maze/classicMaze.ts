@@ -182,6 +182,7 @@ export function getPelletSpawnPositions(
 export function renderMazeToCanvas(
   ctx: MazeCanvasContext,
   maze: MazeDefinition = CLASSIC_MAZE,
+  activePellets?: readonly PelletSpawn[],
 ): MazeRenderSummary {
   const tileSize = maze.tileSizePx
   const width = maze.columns * tileSize
@@ -215,7 +216,7 @@ export function renderMazeToCanvas(
 
       renderedCorridorTileCount += 1
 
-      if (tile === 'pellet' || tile === 'power-pellet') {
+      if (activePellets === undefined && (tile === 'pellet' || tile === 'power-pellet')) {
         const centerX = tileX + tileSize / 2
         const centerY = tileY + tileSize / 2
         const radius = tile === 'power-pellet' ? powerPelletRadius : pelletRadius
@@ -226,6 +227,20 @@ export function renderMazeToCanvas(
         ctx.fill()
         renderedPelletCount += 1
       }
+    }
+  }
+
+  if (activePellets !== undefined) {
+    for (const pellet of activePellets) {
+      const centerX = pellet.col * tileSize + tileSize / 2
+      const centerY = pellet.row * tileSize + tileSize / 2
+      const radius = pellet.kind === 'power-pellet' ? powerPelletRadius : pelletRadius
+
+      ctx.fillStyle = pellet.kind === 'power-pellet' ? POWER_PELLET_COLOR : PELLET_COLOR
+      ctx.beginPath()
+      ctx.arc(centerX, centerY, radius, 0, Math.PI * 2)
+      ctx.fill()
+      renderedPelletCount += 1
     }
   }
 

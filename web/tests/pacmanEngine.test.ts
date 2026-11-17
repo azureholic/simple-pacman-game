@@ -16,17 +16,22 @@ import {
 import {
   DEFAULT_GHOST_SPAWNS,
   GHOST_DIRECTION_PRIORITY,
+  INITIAL_LIVES,
   PACMAN_SPAWN_POSITION,
+  PELLET_SCORE,
+  POWER_PELLET_SCORE,
   attachKeyboardControls,
   checkGhostCollision,
   chooseGhostDirection,
   createPacmanGame,
+  getPelletScore,
   mapKeyToDirection,
   renderGameToCanvas,
   stepGhostState,
   type GhostState,
   type KeyboardEventLike,
   type KeyboardEventTargetLike,
+  type PacmanGameEvent,
   type PacmanGameOptions,
 } from '../src/game/pacmanEngine.ts'
 
@@ -542,4 +547,151 @@ test('Default AI ghostMovement navigates CLASSIC_MAZE deterministically and reso
   assert.deepEqual(retreatSnap.pacman.position, { row: 5, col: 5 })
   assert.deepEqual(retreatSnap.ghosts[0].position, { row: 5, col: 6 })
   assert.equal(retreatSnap.isPacmanDead, false)
+})
+
+test('Pellet collection, scoring, lives, respawn, win/lose end states, events, and HUD attributes work end-to-end', async () => {
+  assert.equal(PELLET_SCORE, 10)
+  assert.equal(POWER_PELLET_SCORE, 50)
+  assert.equal(INITIAL_LIVES, 3)
+  assert.equal(getPelletScore('pellet'), 10)
+  assert.equal(getPelletScore('power-pellet'), 50)
+
+  for (const badLives of [0, -2, 2.5, Number.NaN]) {
+    assert.throws(() => createPacmanGame({ maze: CLASSIC_MAZE, ghosts: [], initialLives: badLives }), Error)
+  }
+
+  const stage: MazeDefinition = {
+    levelId: 'unit-win-lose-stage',
+    columns: 6,
+    rows: 3,
+    tileSizePx: 20,
+    grid: [
+      ['wall', 'wall', 'wall', 'wall', 'wall', 'wall'],
+      ['wall', 'corridor', 'pellet', 'power-pellet', 'corridor', 'wall'],
+      ['wall', 'wall', 'wall', 'wall', 'wall', 'wall'],
+    ],
+  }
+
+  // 1. Pellet collection, win transition, and decoupled event emission
+  const winEvents: PacmanGameEvent[] = []
+  const winGame = createPacmanGame({
+    maze: stage,
+    pacmanSpawn: { row: 1, col: 1 },
+    ghosts: [],
+    onEvent(ev) {
+      winEvents.push(ev)
+    },
+  })
+  const subscribedEvents: PacmanGameEvent[] = []
+  const unsubscribe = winGame.subscribe!((ev) => subscribedEvents.push(ev))
+
+  assert.equal(winGame.getSnapshot().score, 0)
+  assert.equal(winGame.getSnapshot().remainingPelletCount, 2)
+  assert.equal(winGame.getSnapshot().gameStatus, 'playing')
+
+  winGame.handleKeyInput('ArrowRight')
+  const afterFirst = winGame.tick()
+  assert.equal(afterFirst.score, 10)
+  assert.equal(afterFirst.remainingPelletCount, 1)
+  assert.equal(afterFirst.gameStatus, 'playing')
+
+  const afterWin = winGame.tick()
+  assert.equal(afterWin.score, 60)
+  assert.equal(afterWin.remainingPelletCount, 0)
+  assert.equal(afterWin.gameStatus, 'won')
+  assert.equal(afterWin.isWin, true)
+  assert.equal(afterWin.isGameOver, false)
+  assert.equal(afterWin.pacman.direction, null)
+
+  // Post-win input, tick, and respawn are halted; gameWon fires only once
+  assert.equal(winGame.handleKeyInput('ArrowLeft'), false)
+  const postWinTick = winGame.tick()
+  assert.equal(postWinTick.score, 60)
+  assert.equal(postWinTick.gameStatus, 'won')
+  assert.deepEqual(winGame.respawn(), postWinTick)
+
+  assert.deepEqual(
+    winEvents.map((e) => e.type),
+    ['pelletCollected', 'pelletCollected', 'gameWon'],
+  )
+  assert.deepEqual(subscribedEvents, winEvents)
+  unsubscribe()
+  unsubscribe()
+
+  const canvasCheck = createMockCanvasContext()
+  const renderSummary = renderGameToCanvas(canvasCheck.ctx, afterFirst, stage)
+  assert.equal(renderSummary.renderedPelletCount, 1)
+
+  // 2. Lives decrement, respawn continuation, and game-over transition
+  const loseEvents: PacmanGameEvent[] = []
+  const loseGame = createPacmanGame({
+    maze: stage,
+    pacmanSpawn: { row: 1, col: 1 },
+    ghosts: [{ id: 'blinky', position: { row: 1, col: 3 } }],
+    ghostMovement: 'stationary',
+    initialLives: 2,
+    onEvent(ev) {
+      loseEvents.push(ev)
+    },
+  })
+
+  loseGame.handleKeyInput('ArrowRight')
+  loseGame.tick() // (1, 2) collects pellet (+10)
+  const firstDeath = loseGame.tick() // (1, 3) collides with stationary Blinky before power-pellet
+  assert.equal(firstDeath.pacman.status, 'dead')
+  assert.equal(firstDeath.lives, 1)
+  assert.equal(firstDeath.score, 10)
+  assert.equal(firstDeath.remainingPelletCount, 1)
+  assert.equal(firstDeath.gameStatus, 'playing')
+  assert.equal(firstDeath.isGameOver, false)
+
+  const revived = loseGame.respawn()
+  assert.equal(revived.pacman.status, 'alive')
+  assert.deepEqual(revived.pacman.position, { row: 1, col: 1 })
+  assert.equal(revived.lives, 1)
+  assert.equal(revived.score, 10)
+  assert.equal(revived.remainingPelletCount, 1)
+
+  loseGame.handleKeyInput('ArrowRight')
+  loseGame.tick() // (1, 2) already cleared -> +0
+  const finalDeath = loseGame.tick() // (1, 3) collides -> lives=0, game-over
+  assert.equal(finalDeath.lives, 0)
+  assert.equal(finalDeath.gameStatus, 'game-over')
+  assert.equal(finalDeath.isGameOver, true)
+  assert.equal(finalDeath.isWin, false)
+  assert.equal(loseGame.handleKeyInput('ArrowLeft'), false)
+  assert.deepEqual(loseGame.respawn(), finalDeath)
+  assert.deepEqual(
+    loseEvents.map((e) => e.type),
+    ['pelletCollected', 'playerDied', 'playerDied', 'gameLost'],
+  )
+
+  // 3. App SSR HUD markup reflects score, lives, remaining pellets, status, and buttons
+  const vite = await createServer({
+    root: webRoot,
+    logLevel: 'silent',
+    server: { middlewareMode: true, hmr: false },
+    appType: 'custom',
+  })
+
+  try {
+    const mod = await vite.ssrLoadModule('/src/App.tsx')
+    const wonHtml = renderToStaticMarkup(createElement(mod.App, { game: winGame }))
+    assert.match(wonHtml, /data-testid="score-display"/)
+    assert.match(wonHtml, /data-score="60"/)
+    assert.match(wonHtml, /data-testid="pellets-display"/)
+    assert.match(wonHtml, /data-remaining-pellets="0"/)
+    assert.match(wonHtml, /data-game-status="won"/)
+    assert.match(wonHtml, /data-testid="restart-button"/)
+    assert.doesNotMatch(wonHtml, /data-testid="respawn-button"/)
+
+    const gameOverHtml = renderToStaticMarkup(createElement(mod.App, { game: loseGame }))
+    assert.match(gameOverHtml, /data-testid="lives-display"/)
+    assert.match(gameOverHtml, /data-lives="0"/)
+    assert.match(gameOverHtml, /data-game-status="game-over"/)
+    assert.match(gameOverHtml, /Game Over/i)
+    assert.doesNotMatch(gameOverHtml, /data-testid="respawn-button"/)
+  } finally {
+    await vite.close()
+  }
 })

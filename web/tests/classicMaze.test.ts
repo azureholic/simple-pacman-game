@@ -224,6 +224,26 @@ test('renderMazeToCanvas renders background, wall blocks, pellets, and power pel
   assert.equal(defaultSummary.width, 560)
   assert.equal(defaultSummary.height, 620)
   assert.equal(defaultSummary.renderedPelletCount, 244)
+
+  const filteredCtx = createMockCanvasContext()
+  const filteredSummary = renderMazeToCanvas(filteredCtx.ctx, miniMaze, [
+    { row: 1, col: 3, kind: 'power-pellet' },
+  ])
+  assert.deepEqual(filteredSummary, {
+    width: 100,
+    height: 60,
+    renderedWallTileCount: 12,
+    renderedCorridorTileCount: 3,
+    renderedPelletCount: 1,
+  })
+  assert.equal(filteredCtx.filledArcs.length, 1)
+  assert.equal(filteredCtx.filledArcs[0].x, 70)
+  assert.equal(filteredCtx.filledArcs[0].y, 30)
+
+  const emptyPelletsCtx = createMockCanvasContext()
+  const emptyPelletsSummary = renderMazeToCanvas(emptyPelletsCtx.ctx, miniMaze, [])
+  assert.equal(emptyPelletsSummary.renderedPelletCount, 0)
+  assert.equal(emptyPelletsCtx.filledArcs.length, 0)
 })
 
 test('App renders game canvas with classic maze metadata attributes', async () => {
