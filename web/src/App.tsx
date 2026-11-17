@@ -150,6 +150,7 @@ export function App({ game, tickIntervalMs = DEFAULT_TICK_INTERVAL_MS }: AppProp
           data-pacman-row={snapshot.pacman.position.row}
           data-pacman-col={snapshot.pacman.position.col}
           data-pacman-status={snapshot.pacman.status}
+          data-ghost-count={snapshot.ghosts.length}
           width={mazeMetrics.width}
           height={mazeMetrics.height}
           role="img"

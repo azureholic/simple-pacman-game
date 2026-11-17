@@ -1,5 +1,6 @@
 import {
   CLASSIC_MAZE,
+  canMoveFromTile,
   isTileTraversable,
   renderMazeToCanvas,
   resolveTileMovement,
@@ -78,6 +79,13 @@ export interface PacmanGameEngine {
 
 export const PACMAN_SPAWN_POSITION: TilePosition = Object.freeze({ row: 23, col: 13 })
 
+export const GHOST_DIRECTION_PRIORITY: readonly Direction[] = Object.freeze([
+  'up',
+  'left',
+  'down',
+  'right',
+])
+
 export const DEFAULT_GHOST_SPAWNS: readonly GhostInit[] = Object.freeze([
   Object.freeze({
     id: 'blinky',
@@ -111,8 +119,183 @@ const GHOST_COLORS_BY_ID: Readonly<Record<string, string>> = Object.freeze({
   clyde: '#fb923c',
 })
 
+const OPPOSITE_DIRECTION: Readonly<Record<Direction, Direction>> = Object.freeze({
+  up: 'down',
+  down: 'up',
+  left: 'right',
+  right: 'left',
+})
+
+const CARDINAL_DELTAS: readonly { readonly dRow: number; readonly dCol: number }[] = Object.freeze([
+  Object.freeze({ dRow: -1, dCol: 0 }),
+  Object.freeze({ dRow: 0, dCol: -1 }),
+  Object.freeze({ dRow: 1, dCol: 0 }),
+  Object.freeze({ dRow: 0, dCol: 1 }),
+])
+
 function isDirection(value: unknown): value is Direction {
   return value === 'up' || value === 'down' || value === 'left' || value === 'right'
+}
+
+function isGhostMovementMode(value: unknown): value is GhostMovementMode {
+  return value === 'stationary' || value === 'ai'
+}
+
+function manhattanDistance(a: TilePosition, b: TilePosition): number {
+  return Math.abs(a.row - b.row) + Math.abs(a.col - b.col)
+}
+
+function computeBfsDistancesToTarget(
+  maze: MazeDefinition,
+  candidates: readonly TilePosition[],
+  targetPos: TilePosition,
+): readonly number[] {
+  if (
+    !targetPos ||
+    !isTileTraversable(maze, targetPos.row, targetPos.col) ||
+    maze.rows <= 0 ||
+    maze.columns <= 0
+  ) {
+    return candidates.map(() => Number.POSITIVE_INFINITY)
+  }
+
+  const cols = maze.columns
+  const totalCells = maze.rows * cols
+  const distances = new Int32Array(totalCells).fill(-1)
+  const neededMask = new Uint8Array(totalCells)
+  let remainingCandidates = 0
+
+  for (const candidate of candidates) {
+    const idx = candidate.row * cols + candidate.col
+    if (neededMask[idx] === 0) {
+      neededMask[idx] = 1
+      remainingCandidates += 1
+    }
+  }
+
+  const startIdx = targetPos.row * cols + targetPos.col
+  distances[startIdx] = 0
+  if (neededMask[startIdx] === 1) {
+    neededMask[startIdx] = 0
+    remainingCandidates -= 1
+  }
+
+  if (remainingCandidates > 0) {
+    const queue = new Int32Array(totalCells)
+    let head = 0
+    let tail = 0
+    queue[tail] = startIdx
+    tail += 1
+
+    while (head < tail && remainingCandidates > 0) {
+      const currentIdx = queue[head]
+      head += 1
+      const currentRow = Math.floor(currentIdx / cols)
+      const currentCol = currentIdx - currentRow * cols
+      const nextDist = distances[currentIdx] + 1
+
+      for (const delta of CARDINAL_DELTAS) {
+        const neighborRow = currentRow + delta.dRow
+        const neighborCol = currentCol + delta.dCol
+        if (!isTileTraversable(maze, neighborRow, neighborCol)) {
+          continue
+        }
+
+        const neighborIdx = neighborRow * cols + neighborCol
+        if (distances[neighborIdx] !== -1) {
+          continue
+        }
+
+        distances[neighborIdx] = nextDist
+        queue[tail] = neighborIdx
+        tail += 1
+
+        if (neededMask[neighborIdx] === 1) {
+          neededMask[neighborIdx] = 0
+          remainingCandidates -= 1
+        }
+      }
+    }
+  }
+
+  return candidates.map((candidate) => {
+    const dist = distances[candidate.row * cols + candidate.col]
+    return dist >= 0 ? dist : Number.POSITIVE_INFINITY
+  })
+}
+
+export function chooseGhostDirection(
+  maze: MazeDefinition,
+  ghost: GhostState,
+  targetPos: TilePosition,
+): Direction | null {
+  if (!ghost?.position || !isTileTraversable(maze, ghost.position.row, ghost.position.col)) {
+    return null
+  }
+
+  const validDirs = GHOST_DIRECTION_PRIORITY.filter((dir) =>
+    canMoveFromTile(maze, ghost.position, dir),
+  )
+  if (validDirs.length === 0) {
+    return null
+  }
+
+  const currentHeading = ghost.direction
+  const candidateDirs =
+    currentHeading !== null && isDirection(currentHeading) && validDirs.length > 1
+      ? validDirs.filter((dir) => dir !== OPPOSITE_DIRECTION[currentHeading])
+      : validDirs
+
+  if (candidateDirs.length === 1) {
+    return candidateDirs[0]
+  }
+
+  const candidatePositions = candidateDirs.map((dir) =>
+    resolveTileMovement(maze, ghost.position, dir),
+  )
+  const bfsDistances = computeBfsDistancesToTarget(maze, candidatePositions, targetPos)
+
+  let bestIndex = 0
+  let bestBfsDist = bfsDistances[0]
+  let bestManhattanDist = manhattanDistance(candidatePositions[0], targetPos)
+
+  for (let index = 1; index < candidateDirs.length; index += 1) {
+    const bfsDist = bfsDistances[index]
+    const manhattanDist = manhattanDistance(candidatePositions[index], targetPos)
+
+    if (
+      bfsDist < bestBfsDist ||
+      (bfsDist === bestBfsDist && manhattanDist < bestManhattanDist)
+    ) {
+      bestIndex = index
+      bestBfsDist = bfsDist
+      bestManhattanDist = manhattanDist
+    }
+  }
+
+  return candidateDirs[bestIndex]
+}
+
+export function stepGhostState(
+  maze: MazeDefinition,
+  ghost: GhostState,
+  targetPos: TilePosition,
+): GhostState {
+  const nextDirection = chooseGhostDirection(maze, ghost, targetPos)
+  if (nextDirection === null) {
+    return Object.freeze({
+      id: ghost.id,
+      position: clonePosition(ghost.position),
+      direction: null,
+    })
+  }
+
+  const nextPos = resolveTileMovement(maze, ghost.position, nextDirection)
+  return Object.freeze({
+    id: ghost.id,
+    position: clonePosition(nextPos),
+    direction: nextDirection,
+  })
 }
 
 function keyStringToDirection(key: string): Direction | null {
@@ -257,6 +440,11 @@ function buildInitialState(options?: PacmanGameOptions): InternalEngineState {
     )
   }
 
+  if (options?.ghostMovement !== undefined && !isGhostMovementMode(options.ghostMovement)) {
+    throw new Error(`Invalid ghostMovement mode "${String(options.ghostMovement)}"`)
+  }
+  const ghostMovement: GhostMovementMode = options?.ghostMovement ?? 'ai'
+
   const rawGhosts =
     options?.ghosts !== undefined ? options.ghosts : maze === CLASSIC_MAZE ? DEFAULT_GHOST_SPAWNS : []
 
@@ -294,7 +482,7 @@ function buildInitialState(options?: PacmanGameOptions): InternalEngineState {
     pacmanDirection: null,
     pacmanStatus: initialOverlap ? 'dead' : 'alive',
     ghosts: normalizedGhosts,
-    ghostMovement: options?.ghostMovement ?? 'stationary',
+    ghostMovement,
     deathCount: initialOverlap ? 1 : 0,
   }
 }
@@ -372,13 +560,15 @@ export function createPacmanGame(options?: PacmanGameOptions): PacmanGameEngine 
       if (state.pacmanDirection !== null) {
         state.pacmanPosition = resolveTileMovement(
           state.maze,
-          state.pacmanPosition,
+          prevPacmanPos,
           state.pacmanDirection,
         )
       }
 
-      if (state.ghostMovement === 'stationary') {
-        // Ghosts remain stationary across ticks.
+      if (state.ghostMovement === 'ai') {
+        state.ghosts = state.ghosts.map((ghost) =>
+          stepGhostState(state.maze, ghost, prevPacmanPos),
+        )
       }
 
       const currentGhostPositions = state.ghosts.map((ghost) => ghost.position)
