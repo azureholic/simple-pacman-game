@@ -171,8 +171,9 @@ export const DEFAULT_GHOST_SPAWNS: readonly GhostInit[] = Object.freeze([
   }),
 ])
 
-const PACMAN_ALIVE_COLOR = '#facc15'
-const PACMAN_DEAD_COLOR = '#94a3b8'
+export const PACMAN_COLOR = '#0000FF'
+export const PACMAN_ALIVE_COLOR = '#0000FF'
+export const PACMAN_DEAD_COLOR = 'rgba(0, 0, 255, 0.6)'
 const DEFAULT_GHOST_COLOR = '#ef4444'
 const GHOST_COLORS_BY_ID: Readonly<Record<string, string>> = Object.freeze({
   blinky: '#ef4444',

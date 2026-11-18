@@ -17,6 +17,9 @@ import {
   DEFAULT_GHOST_SPAWNS,
   GHOST_DIRECTION_PRIORITY,
   INITIAL_LIVES,
+  PACMAN_ALIVE_COLOR,
+  PACMAN_COLOR,
+  PACMAN_DEAD_COLOR,
   PACMAN_SPAWN_POSITION,
   PELLET_SCORE,
   POWER_PELLET_SCORE,
@@ -694,4 +697,94 @@ test('Pellet collection, scoring, lives, respawn, win/lose end states, events, a
   } finally {
     await vite.close()
   }
+})
+
+test('Pacman renders in blue (#0000FF) across start, active gameplay, dying, win, game-over, respawn, and reset states without altering non-Pacman colors', () => {
+  assert.equal(PACMAN_COLOR, '#0000FF')
+  assert.equal(PACMAN_ALIVE_COLOR, '#0000FF')
+  assert.equal(PACMAN_DEAD_COLOR, 'rgba(0, 0, 255, 0.6)')
+  assert.notEqual(PACMAN_ALIVE_COLOR, PACMAN_DEAD_COLOR)
+
+  // Start screen and non-Pacman entity/maze color isolation on CLASSIC_MAZE
+  const startGame = createPacmanGame({
+    maze: CLASSIC_MAZE,
+    ghosts: DEFAULT_GHOST_SPAWNS,
+    ghostMovement: 'stationary',
+  })
+  const startCanvas = createMockCanvasContext()
+  renderGameToCanvas(startCanvas.ctx, startGame.getSnapshot(), CLASSIC_MAZE)
+
+  assert.equal(startCanvas.fillRectCalls[0].fillStyle, '#020617')
+  for (const wallRect of startCanvas.fillRectCalls.slice(1)) {
+    assert.equal(wallRect.fillStyle, '#1d4ed8')
+  }
+  const pelletArcs = startCanvas.filledArcs.slice(0, 244)
+  for (const arc of pelletArcs) {
+    assert.equal(
+      arc.fillStyle,
+      arc.radius === CLASSIC_MAZE.tileSizePx * 0.3 ? '#fde047' : '#fde68a',
+    )
+  }
+  const ghostArcs = startCanvas.filledArcs.slice(244, 248)
+  assert.deepEqual(
+    ghostArcs.map((a) => a.fillStyle),
+    ['#ef4444', '#f472b6', '#38bdf8', '#fb923c'],
+  )
+  assert.equal(startCanvas.filledArcs[248].fillStyle, PACMAN_ALIVE_COLOR)
+
+  // Active gameplay movement, pellet & power-pellet collection, win, dying, respawn, game-over, and reset
+  const stage: MazeDefinition = {
+    levelId: 'blue-color-stage',
+    columns: 6,
+    rows: 3,
+    tileSizePx: 20,
+    grid: [
+      ['wall', 'wall', 'wall', 'wall', 'wall', 'wall'],
+      ['wall', 'corridor', 'pellet', 'power-pellet', 'corridor', 'wall'],
+      ['wall', 'wall', 'wall', 'wall', 'wall', 'wall'],
+    ],
+  }
+
+  const getPacmanArcFill = (snap: ReturnType<typeof startGame.getSnapshot>) => {
+    const mock = createMockCanvasContext()
+    renderGameToCanvas(mock.ctx, { ...snap, ghosts: [] }, stage)
+    const arc = mock.filledArcs.at(-1)
+    assert.ok(arc)
+    return arc.fillStyle
+  }
+
+  const playGame = createPacmanGame({
+    maze: stage,
+    pacmanSpawn: { row: 1, col: 1 },
+    ghosts: [],
+  })
+  playGame.handleKeyInput('ArrowRight')
+  assert.equal(getPacmanArcFill(playGame.tick()), PACMAN_ALIVE_COLOR) // pellet collected
+  const wonSnap = playGame.tick() // power-pellet collected -> won
+  assert.equal(wonSnap.gameStatus, 'won')
+  assert.equal(getPacmanArcFill(wonSnap), PACMAN_ALIVE_COLOR)
+  assert.equal(getPacmanArcFill(playGame.reset()), PACMAN_ALIVE_COLOR)
+
+  const deathGame = createPacmanGame({
+    maze: stage,
+    pacmanSpawn: { row: 1, col: 1 },
+    ghosts: [{ id: 'blinky', position: { row: 1, col: 2 } }],
+    ghostMovement: 'stationary',
+    initialLives: 2,
+  })
+  deathGame.handleKeyInput('ArrowRight')
+  const midDeadSnap = deathGame.tick()
+  assert.equal(midDeadSnap.pacman.status, 'dead')
+  assert.equal(midDeadSnap.gameStatus, 'playing')
+  assert.equal(getPacmanArcFill(midDeadSnap), PACMAN_DEAD_COLOR)
+
+  const respawnSnap = deathGame.respawn()
+  assert.equal(respawnSnap.pacman.status, 'alive')
+  assert.equal(getPacmanArcFill(respawnSnap), PACMAN_ALIVE_COLOR)
+
+  deathGame.handleKeyInput('ArrowRight')
+  const gameOverSnap = deathGame.tick()
+  assert.equal(gameOverSnap.gameStatus, 'game-over')
+  assert.equal(getPacmanArcFill(gameOverSnap), PACMAN_DEAD_COLOR)
+  assert.equal(getPacmanArcFill(deathGame.reset()), PACMAN_ALIVE_COLOR)
 })
