@@ -16,3 +16,4 @@ A browser-only Pacman game implemented as a React frontend with no backend requi
 - **Should sound effects and music be included?**: not needed
 - **What level layout is expected (e.g. the classic maze, a single test level, or multiple levels)?**: classic maze
 - **Is localStorage for high scores required, or should no persistence be implemented at all?**: no persistence
+- [001 - Update Pacman Character Color](docs/features/001-pacman-color-update.md)
